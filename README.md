@@ -252,12 +252,95 @@ mcpServers:
 
 ---
 
-### 8. Remote Connection via Cloudflare Tunnel / HTTP
-If running the bridge daemon on another computer or VPS:
+### 8. Remote Connection via Cloudflare Tunnel (Remote URL / SSE / mcp-remote)
 
+If your ChatGPT browser or bridge server runs on a home computer or VPS, and you want AI clients on other machines/laptops to connect to it securely across the internet via Cloudflare Tunnel:
+
+#### Step A: Expose Bridge Server on the Host Machine
 ```bash
-# Run bridge with Cloudflare Quick Tunnel
+# Start Cloudflare Quick Tunnel (Free, no account required)
 cloudflared tunnel --url http://127.0.0.1:18999
+```
+> This will generate a public HTTPS URL, for example: `https://alpha-bravo-charlie.trycloudflare.com`
+
+---
+
+#### Step B: Configure Client on Remote Machines
+
+##### 1. Antigravity / Gemini CLI (Remote SSE / URL)
+Add to `~/.gemini/config/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "chatgpt-remote": {
+      "serverUrl": "https://alpha-bravo-charlie.trycloudflare.com/sse"
+    }
+  }
+}
+```
+
+##### 2. Cursor IDE (Remote SSE)
+Add to `.cursor/mcp.json` or Cursor Settings:
+```json
+{
+  "mcpServers": {
+    "chatgpt-remote": {
+      "url": "https://alpha-bravo-charlie.trycloudflare.com/sse"
+    }
+  }
+}
+```
+
+##### 3. VS Code Cline / Roo Code (Remote SSE)
+Add to `cline_mcp_settings.json`:
+```json
+{
+  "mcpServers": {
+    "chatgpt-remote": {
+      "url": "https://alpha-bravo-charlie.trycloudflare.com/sse",
+      "type": "sse",
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+##### 4. Claude Desktop / Any stdio Client (via `mcp-remote`)
+For clients that only accept `command` (stdio), use `mcp-remote` to bridge the Cloudflare Tunnel URL:
+```json
+{
+  "mcpServers": {
+    "chatgpt-remote": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://alpha-bravo-charlie.trycloudflare.com/sse"
+      ]
+    }
+  }
+}
+```
+
+##### 5. LibreChat (`librechat.yaml`)
+```yaml
+mcpServers:
+  chatgpt-remote:
+    type: sse
+    url: https://alpha-bravo-charlie.trycloudflare.com/sse
+```
+
+##### 6. Direct HTTP REST API (cURL / Python / Node.js)
+You can also interact directly with the bridge endpoints via Cloudflare:
+```bash
+# Query status
+curl -s https://alpha-bravo-charlie.trycloudflare.com/status
+
+# Ask a question
+curl -X POST https://alpha-bravo-charlie.trycloudflare.com/ask \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello from Cloudflare Tunnel!"}'
 ```
 
 ---
