@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "MCP ChatGPT Bridge",
+  "version": "1.0.0",
+  "description": "Bridge ChatGPT Web in this Chrome Profile to MCP (Model Context Protocol) Server",
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "http://127.0.0.1:*/*",
+    "http://localhost:*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MCP ChatGPT Bridge"
+  }
+}
