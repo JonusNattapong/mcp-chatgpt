@@ -245,6 +245,15 @@ export class ChatGPTClient {
     };
   }
 
+  public async getLatestResponse(conversationId?: string, refreshFirst = true): Promise<ChatResponse> {
+    const remote = await this.bridgeServer.checkRemoteStatus();
+    if (this.bridgeServer.isConnected() || remote.connected) {
+      return this.bridgeServer.getLatestResponse(conversationId, refreshFirst);
+    }
+
+    throw new Error('Chrome Extension is not connected.');
+  }
+
   public async reloadPage(): Promise<{ success: boolean; message: string }> {
     const remote = await this.bridgeServer.checkRemoteStatus();
     if (this.bridgeServer.isConnected() || remote.connected) {

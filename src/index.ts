@@ -194,6 +194,24 @@ async function main() {
           },
         },
         {
+          name: 'chatgpt_get_latest_response',
+          description:
+            'Fetch and recover the latest assistant response (including text, code blocks, and images) from the current or specified conversation without asking a new question. Useful after recovering from a timeout or reload.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              conversation_id: {
+                type: 'string',
+                description: 'Optional conversation ID or URL to fetch the latest answer from.',
+              },
+              refresh_first: {
+                type: 'boolean',
+                description: 'Whether to reload the page before reading the latest response (default: true).',
+              },
+            },
+          },
+        },
+        {
           name: 'chatgpt_get_status',
           description:
             'Get the current status of ChatGPT Web automation (initialized, logged in, active profile, extension bridge status, current conversation URL, title, model).',
@@ -354,6 +372,40 @@ async function main() {
             },
           ],
         };
+      }
+
+      if (name === 'chatgpt_get_latest_response') {
+        const conversationId = args?.conversation_id ? String(args.conversation_id) : undefined;
+        const refreshFirst = args?.refresh_first !== undefined ? Boolean(args.refresh_first) : true;
+        const response = await client.getLatestResponse(conversationId, refreshFirst);
+
+        const contents: any[] = [
+          {
+            type: 'text',
+            text: response.content,
+          },
+        ];
+
+        if (response.extractedCode && response.extractedCode.length > 0) {
+          contents.push({
+            type: 'text',
+            text: `\n\n### Extracted Code Blocks:\n\`\`\`\n${response.extractedCode.join('\n\n')}\n\`\`\``,
+          });
+        }
+
+        if (response.imageUrls && response.imageUrls.length > 0) {
+          contents.push({
+            type: 'text',
+            text: `\n\n### Generated Images:\n${response.imageUrls.map((u) => `![Generated Image](${u})`).join('\n')}`,
+          });
+        }
+
+        contents.push({
+          type: 'text',
+          text: `\n\n---\n*Profile:* ${response.profileUsed || 'Default'}${response.conversationUrl ? ` | *Conversation URL:* ${response.conversationUrl}` : ''}`,
+        });
+
+        return { content: contents };
       }
 
       if (name === 'chatgpt_new_chat') {

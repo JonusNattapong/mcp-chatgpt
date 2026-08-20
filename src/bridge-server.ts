@@ -85,6 +85,21 @@ export class ExtensionBridgeServer {
           return;
         }
 
+        if ((req.url?.startsWith('/latest') || req.url?.startsWith('/latest-response')) && req.method === 'GET') {
+          try {
+            const parsedUrl = new URL(req.url, 'http://127.0.0.1');
+            const conversationId = parsedUrl.searchParams.get('conversation_id') || undefined;
+            const refreshFirst = parsedUrl.searchParams.get('refresh') !== 'false';
+            const result = await this.getLatestResponseDirect(conversationId, refreshFirst);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (err: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err?.message || String(err) }));
+          }
+          return;
+        }
+
         if (req.url === '/ask' && req.method === 'POST') {
           let body = '';
           req.on('data', (chunk) => {
@@ -239,6 +254,59 @@ export class ExtensionBridgeServer {
     }
 
     throw new Error('Chrome Extension is not connected.');
+  }
+
+  public async getLatestResponse(conversationId?: string, refreshFirst = true): Promise<ChatResponse> {
+    if (this.isConnected()) {
+      return this.getLatestResponseDirect(conversationId, refreshFirst);
+    }
+
+    if (!this.isServerOwner) {
+      const remoteStatus = await this.checkRemoteStatus();
+      if (remoteStatus.connected) {
+        const query = new URLSearchParams();
+        if (conversationId) query.set('conversation_id', conversationId);
+        if (!refreshFirst) query.set('refresh', 'false');
+        const res = await fetch(`http://127.0.0.1:${this.port}/latest?${query.toString()}`);
+        const data: any = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Bridge request failed');
+        }
+        return data;
+      }
+    }
+
+    throw new Error('Chrome Extension is not connected.');
+  }
+
+  private async getLatestResponseDirect(conversationId?: string, refreshFirst = true): Promise<ChatResponse> {
+    if (!this.isConnected()) {
+      throw new Error('Chrome Extension is not connected.');
+    }
+
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeoutTimer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Timeout waiting for latest response from Chrome Extension'));
+      }, 25000);
+
+      this.pendingRequests.set(requestId, {
+        resolve,
+        reject,
+        timeoutTimer,
+      });
+
+      this.activeWs?.send(
+        JSON.stringify({
+          action: 'get_latest_response',
+          id: requestId,
+          conversationId,
+          refreshFirst,
+        })
+      );
+    });
   }
 
   private async reloadPageDirect(): Promise<{ success: boolean; message: string }> {

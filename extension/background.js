@@ -62,6 +62,8 @@ async function checkAndConnect() {
           await handleListModels(msg);
         } else if (msg.action === 'reload') {
           await handleReloadRequest(msg);
+        } else if (msg.action === 'get_latest_response') {
+          await handleGetLatestResponse(msg);
         }
       } catch (err) {
         console.error('[MCP Bridge] Error handling message:', err);
@@ -380,7 +382,66 @@ async function handleAskRequest(msg) {
     }
 
     if (!finalResponse) {
-      throw new Error('Timeout waiting for ChatGPT response');
+      // Auto-Recovery attempt: reload tab and extract result
+      try {
+        await chrome.tabs.reload(tab.id);
+        await waitForTabReady(tab.id);
+        const recoveryScript = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: 'MAIN',
+          func: () => {
+            const turns = Array.from(
+              document.querySelectorAll('[data-testid^="conversation-turn-"]')
+            ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
+            const lastTurn = turns[turns.length - 1];
+            if (!lastTurn) return null;
+
+            const md = lastTurn.querySelector('.markdown') || lastTurn;
+            const currentText = (md.innerText || '').trim();
+
+            const codes = [];
+            const codeNodes = lastTurn.querySelectorAll('pre code, pre');
+            for (const cn of codeNodes) {
+              const txt = cn.textContent || '';
+              if (txt.trim()) codes.push(txt.trim());
+            }
+
+            const images = [];
+            const imgNodes = Array.from(lastTurn.querySelectorAll('img'));
+            for (const img of imgNodes) {
+              const src = img.getAttribute('src') || '';
+              const alt = img.getAttribute('alt') || '';
+              if (src && !src.includes('avatar') && !src.includes('profile') && !src.includes('data:image/svg')) {
+                images.push({ url: src, alt });
+              }
+            }
+
+            return { text: currentText, codes, images, url: window.location.href };
+          },
+        });
+
+        const recovered = recoveryScript[0]?.result;
+        if (recovered && (recovered.text || recovered.images?.length > 0)) {
+          const match = recovered.url.match(/\/c\/([a-zA-Z0-9-]+)/);
+          const imageUrls = recovered.images?.map((img) => img.url) || [];
+          let contentText = recovered.text;
+          if (!contentText && imageUrls.length > 0) {
+            contentText = `[Generated Image](${imageUrls[0]})`;
+          }
+          finalResponse = {
+            content: contentText || 'Recovered response from page reload.',
+            extractedCode: recovered.codes?.length > 0 ? recovered.codes : undefined,
+            imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+            images: recovered.images?.length > 0 ? recovered.images : undefined,
+            conversationUrl: recovered.url,
+            conversationId: match ? match[1] : undefined,
+          };
+        }
+      } catch (recErr) {}
+    }
+
+    if (!finalResponse) {
+      throw new Error('Timeout waiting for ChatGPT response. You can call chatgpt_get_latest_response to retrieve it.');
     }
 
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -557,6 +618,117 @@ async function handleReloadRequest(msg) {
           id,
           content: 'ChatGPT page reloaded successfully.',
           reloaded: true,
+        })
+      );
+    }
+  } catch (err) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          action: 'response',
+          id,
+          error: err.message || String(err),
+        })
+      );
+    }
+  }
+}
+
+async function handleGetLatestResponse(msg) {
+  const { id, conversationId, refreshFirst = true } = msg;
+
+  try {
+    let targetUrl = null;
+    if (conversationId) {
+      targetUrl = conversationId.startsWith('http')
+        ? conversationId
+        : `https://chatgpt.com/c/${conversationId}`;
+    }
+
+    const tab = await getOrCreateChatGPTTab(targetUrl, false);
+    if (!tab || !tab.id) {
+      throw new Error('Unable to find or open ChatGPT tab');
+    }
+
+    if (refreshFirst) {
+      await chrome.tabs.reload(tab.id);
+      await waitForTabReady(tab.id);
+    }
+
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: () => {
+        const turns = Array.from(
+          document.querySelectorAll('[data-testid^="conversation-turn-"]')
+        ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
+
+        const mdElements = Array.from(document.querySelectorAll('.markdown')).filter(
+          (el) => !el.closest('[data-message-author-role="user"]')
+        );
+
+        const lastContainer = turns[turns.length - 1] || mdElements[mdElements.length - 1];
+        if (!lastContainer) {
+          return { error: 'No response found in this conversation.' };
+        }
+
+        const md = lastContainer.querySelector('.markdown') || lastContainer;
+        const currentText = (md.innerText || '').trim();
+
+        const codes = [];
+        const codeNodes = lastContainer.querySelectorAll('pre code, pre');
+        for (const cn of codeNodes) {
+          const txt = cn.textContent || '';
+          if (txt.trim()) codes.push(txt.trim());
+        }
+
+        const images = [];
+        const imgNodes = Array.from(lastContainer.querySelectorAll('img'));
+        for (const img of imgNodes) {
+          const src = img.getAttribute('src') || '';
+          const alt = img.getAttribute('alt') || '';
+          if (
+            src &&
+            !src.includes('avatar') &&
+            !src.includes('profile') &&
+            !src.includes('data:image/svg')
+          ) {
+            images.push({ url: src, alt });
+          }
+        }
+
+        return {
+          text: currentText,
+          codes,
+          images,
+          url: window.location.href,
+        };
+      },
+    });
+
+    const data = result[0]?.result;
+    if (!data || data.error) {
+      throw new Error(data?.error || 'Failed to extract latest response');
+    }
+
+    const match = data.url.match(/\/c\/([a-zA-Z0-9-]+)/);
+    const imageUrls = data.images?.map((img) => img.url) || [];
+    let contentText = data.text;
+    if (!contentText && imageUrls.length > 0) {
+      contentText = `[Generated Image](${imageUrls[0]})`;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          action: 'response',
+          id,
+          content: contentText || 'No text content in response.',
+          extractedCode: data.codes?.length > 0 ? data.codes : undefined,
+          imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+          images: data.images?.length > 0 ? data.images : undefined,
+          conversationUrl: data.url,
+          conversationId: match ? match[1] : undefined,
         })
       );
     }
