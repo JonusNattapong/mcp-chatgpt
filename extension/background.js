@@ -655,58 +655,71 @@ async function handleGetLatestResponse(msg) {
       await waitForTabReady(tab.id);
     }
 
-    const result = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      func: () => {
-        const turns = Array.from(
-          document.querySelectorAll('[data-testid^="conversation-turn-"]')
-        ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
+    let data = null;
+    const startTime = Date.now();
+    while (Date.now() - startTime < 12000) {
+      await new Promise((r) => setTimeout(r, 600));
 
-        const mdElements = Array.from(document.querySelectorAll('.markdown')).filter(
-          (el) => !el.closest('[data-message-author-role="user"]')
-        );
+      const result = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        func: () => {
+          const turns = Array.from(
+            document.querySelectorAll('[data-testid^="conversation-turn-"]')
+          ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
 
-        const lastContainer = turns[turns.length - 1] || mdElements[mdElements.length - 1];
-        if (!lastContainer) {
-          return { error: 'No response found in this conversation.' };
-        }
+          const mdElements = Array.from(document.querySelectorAll('.markdown')).filter(
+            (el) => !el.closest('[data-message-author-role="user"]')
+          );
 
-        const md = lastContainer.querySelector('.markdown') || lastContainer;
-        const currentText = (md.innerText || '').trim();
-
-        const codes = [];
-        const codeNodes = lastContainer.querySelectorAll('pre code, pre');
-        for (const cn of codeNodes) {
-          const txt = cn.textContent || '';
-          if (txt.trim()) codes.push(txt.trim());
-        }
-
-        const images = [];
-        const imgNodes = Array.from(lastContainer.querySelectorAll('img'));
-        for (const img of imgNodes) {
-          const src = img.getAttribute('src') || '';
-          const alt = img.getAttribute('alt') || '';
-          if (
-            src &&
-            !src.includes('avatar') &&
-            !src.includes('profile') &&
-            !src.includes('data:image/svg')
-          ) {
-            images.push({ url: src, alt });
+          const lastContainer = turns[turns.length - 1] || mdElements[mdElements.length - 1];
+          if (!lastContainer) {
+            return null;
           }
-        }
 
-        return {
-          text: currentText,
-          codes,
-          images,
-          url: window.location.href,
-        };
-      },
-    });
+          const md = lastContainer.querySelector('.markdown') || lastContainer;
+          const currentText = (md.innerText || '').trim();
 
-    const data = result[0]?.result;
+          const codes = [];
+          const codeNodes = lastContainer.querySelectorAll('pre code, pre');
+          for (const cn of codeNodes) {
+            const txt = cn.textContent || '';
+            if (txt.trim()) codes.push(txt.trim());
+          }
+
+          const images = [];
+          const imgNodes = Array.from(lastContainer.querySelectorAll('img'));
+          for (const img of imgNodes) {
+            const src = img.getAttribute('src') || '';
+            const alt = img.getAttribute('alt') || '';
+            if (
+              src &&
+              !src.includes('avatar') &&
+              !src.includes('profile') &&
+              !src.includes('data:image/svg')
+            ) {
+              images.push({ url: src, alt });
+            }
+          }
+
+          if (!currentText && images.length === 0) {
+            return null;
+          }
+
+          return {
+            text: currentText,
+            codes,
+            images,
+            url: window.location.href,
+          };
+        },
+      });
+
+      data = result[0]?.result;
+      if (data && (data.text || data.images?.length > 0)) {
+        break;
+      }
+    }
     if (!data || data.error) {
       throw new Error(data?.error || 'Failed to extract latest response');
     }
