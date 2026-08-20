@@ -18,6 +18,8 @@ An MCP (Model Context Protocol) server that allows AI assistants (such as Google
 - 💾 **Persistent Session**: Keeps browser profile & login cookies saved locally, so you only log in once.
 - 🖥️ **Headed & Headless Modes**: Run silently in background (headless) or launch visible window (`--login` / `--headed`) for initial authentication or captcha resolution.
 - 🔌 **Chrome CDP Support**: Connect to an already running Google Chrome instance via `--remote-debugging-port`.
+- 🧰 **Workspace Tools**: Search files, run builds/tests, and edit code with cross-platform `shell_command` and root-confined `apply_patch` tools.
+- 🌐 **Remote MCP Tunnel**: Optional Streamable HTTP endpoint with Bearer authentication for Cloudflare Tunnel/ngrok or another HTTPS tunnel.
 
 ---
 
@@ -25,6 +27,8 @@ An MCP (Model Context Protocol) server that allows AI assistants (such as Google
 
 | Tool | Parameters | Description |
 | :--- | :--- | :--- |
+| `shell_command` | `command` (string, required)<br>`workdir` (string, optional)<br>`shell` (`auto`\|`powershell`\|`bash`, optional)<br>`timeout_ms` (number, optional) | Run commands with a working directory under the configured root. Auto-selects PowerShell on Windows and Bash on Linux/macOS. |
+| `apply_patch` | `patch` (string, required) | Add, update, delete, or move files under the configured shell root using structured patches. |
 | `chatgpt_ask` | `message` (string, required)<br>`web_search` (boolean, optional)<br>`model` (string, optional)<br>`reasoning_effort` ("low"\|"medium"\|"high", optional)<br>`image_paths` (string[], optional)<br>`file_paths` (string[], optional)<br>`extract_code_only` (boolean, optional)<br>`auto_continue` (boolean, optional)<br>`refresh_page` (boolean, optional)<br>`profile` (string, optional)<br>`new_chat` (boolean, optional)<br>`conversation_id` (string, optional)<br>`timeout_ms` (number, optional) | Send prompt/question to ChatGPT Web with advanced controls and return assistant response. |
 | `chatgpt_reload` | None | Reload and refresh the current ChatGPT Web page to recover from stuck states or connection glitches. |
 | `chatgpt_list_models` | None | List all available AI models (GPT-5.6 Sol, GPT-5.5, o3, GPT-4o, o1) and reasoning effort options for this account. |
@@ -39,6 +43,25 @@ An MCP (Model Context Protocol) server that allows AI assistants (such as Google
 
 ## 🚀 Quick Start
 
+> [!WARNING]
+> `shell_command` can execute arbitrary commands with the same operating-system permissions as the MCP server. `--shell-root` limits its selectable starting working directory, but it is not an OS sandbox. Run the server as a restricted user or in a container when connecting untrusted clients. `apply_patch` does enforce that all changed paths stay under `--shell-root`.
+
+### Remote MCP tunnel
+
+Local `stdio` remains the default. To expose a remote-compatible MCP endpoint, start HTTP mode with a token:
+
+```bash
+mcp-chatgpt --http --http-token "change-this-token"
+```
+
+The endpoint is `http://127.0.0.1:8787/mcp`. Put a tunnel in front of it, for example:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Configure the remote MCP client with the public tunnel URL ending in `/mcp` and the header `Authorization: Bearer change-this-token`. `/healthz` can be used for a tunnel health check. If either this process or the tunnel stops, remote MCP requests are unavailable.
+
 ### 1. Install & Build
 
 ```bash
@@ -52,7 +75,18 @@ npx playwright install chromium
 
 # Build TypeScript
 npm run build
+
+# Install the MCP command globally
+npm install -g .
 ```
+
+After installation, verify it with:
+
+```bash
+mcp-chatgpt --help
+```
+
+The package runs `npm run build` automatically during installation, so the global command always uses the current TypeScript source when installed from a local checkout.
 
 ---
 
@@ -123,6 +157,12 @@ Options:
   --cdp <endpoint>         Connect to an existing Chrome browser via CDP endpoint
   --bridge-port <port>     Port for Chrome Extension bridge WebSocket (default: "18999")
   --bridge-only            Run only the Chrome Extension WebSocket bridge server
+  --shell-root <path>      Restrict shell and patch tools to this directory (default: current directory)
+  --shell-max-timeout <ms> Maximum shell command timeout in milliseconds (default: "300000")
+  --http                   Expose an MCP Streamable HTTP endpoint for a tunnel/remote client
+  --http-host <host>       HTTP bind host (default: "127.0.0.1")
+  --http-port <port>       HTTP port for the MCP endpoint (default: "8787")
+  --http-token <token>     Bearer token required by remote MCP clients (or MCP_HTTP_TOKEN)
   --timeout <ms>           Default timeout in milliseconds (default: "120000")
   -h, --help               Display help for command
 ```
@@ -193,4 +233,3 @@ You are integrated with the `mcp-chatgpt` MCP server, granting you direct access
 ## 📄 License
 
 MIT
-

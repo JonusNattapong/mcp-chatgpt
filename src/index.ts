@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { program } from 'commander';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { ChatGPTClient } from './chatgpt-client.js';
+import { applyFilePatch, runShellCommand, type ShellKind } from './shell-tools.js';
 import type { ChatGPTConfig } from './types.js';
 
 program
@@ -22,6 +26,12 @@ program
   .option('--cdp <endpoint>', 'Connect to an existing Chrome browser via CDP endpoint')
   .option('--bridge-port <port>', 'Port for Chrome Extension bridge WebSocket', '18999')
   .option('--bridge-only', 'Run only the Chrome Extension WebSocket bridge server', false)
+  .option('--shell-root <path>', 'Restrict shell and patch tools to this directory', process.cwd())
+  .option('--shell-max-timeout <ms>', 'Maximum shell command timeout in milliseconds', '300000')
+  .option('--http', 'Expose an MCP Streamable HTTP endpoint for a tunnel/remote client', false)
+  .option('--http-host <host>', 'HTTP bind host (default: 127.0.0.1)', '127.0.0.1')
+  .option('--http-port <port>', 'HTTP port for the MCP endpoint', '8787')
+  .option('--http-token <token>', 'Bearer token required by remote MCP clients (or MCP_HTTP_TOKEN)')
   .option('--timeout <ms>', 'Default timeout in milliseconds', '120000');
 
 program.parse(process.argv);
@@ -38,6 +48,20 @@ const config: ChatGPTConfig = {
 };
 
 const client = new ChatGPTClient(config);
+const shellRoot = String(options.shellRoot);
+const shellMaxTimeoutMs = parseInt(options.shellMaxTimeout, 10);
+const httpHost = String(options.httpHost);
+const httpPort = parseInt(options.httpPort, 10);
+const httpToken = options.httpToken ? String(options.httpToken) : process.env.MCP_HTTP_TOKEN;
+if (!Number.isFinite(shellMaxTimeoutMs) || shellMaxTimeoutMs < 100) {
+  throw new Error('--shell-max-timeout must be a number of at least 100 milliseconds.');
+}
+if (options.http && (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535)) {
+  throw new Error('--http-port must be an integer between 1 and 65535.');
+}
+if (options.http && !httpToken) {
+  throw new Error('HTTP mode requires --http-token or MCP_HTTP_TOKEN.');
+}
 
 async function runBridgeOnlyMode(): Promise<void> {
   console.log(`[MCP Bridge] Bridge WebSocket server listening on ws://127.0.0.1:${config.bridgePort}`);
@@ -85,6 +109,46 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
+        {
+          name: 'shell_command',
+          description:
+            'Run a command with a working directory inside the configured shell root. Uses PowerShell on Windows and Bash on Linux/macOS by default. The command has the same OS permissions as this MCP server.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: 'Command to execute.' },
+              workdir: {
+                type: 'string',
+                description: 'Working directory relative to the configured shell root (default: root).',
+              },
+              shell: {
+                type: 'string',
+                enum: ['auto', 'powershell', 'bash'],
+                description: 'Shell to use (default: auto).',
+              },
+              timeout_ms: {
+                type: 'number',
+                description: 'Command timeout in milliseconds (default: 30000; bounded by server configuration).',
+              },
+            },
+            required: ['command'],
+          },
+        },
+        {
+          name: 'apply_patch',
+          description:
+            'Safely add, update, delete, or move files inside the configured shell root using an *** Begin Patch / *** End Patch patch. Prefer this over shell redirection for code edits.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              patch: {
+                type: 'string',
+                description: 'Patch text containing Add File, Update File, or Delete File operations.',
+              },
+            },
+            required: ['patch'],
+          },
+        },
         {
           name: 'chatgpt_ask',
           description:
@@ -265,6 +329,34 @@ async function main() {
     const { name, arguments: args } = request.params;
 
     try {
+      if (name === 'shell_command') {
+        const command = String(args?.command || '');
+        const result = await runShellCommand({
+          command,
+          root: shellRoot,
+          workdir: args?.workdir ? String(args.workdir) : undefined,
+          shell: (args?.shell ? String(args.shell) : 'auto') as ShellKind,
+          timeoutMs: args?.timeout_ms !== undefined ? Number(args.timeout_ms) : undefined,
+          maxTimeoutMs: shellMaxTimeoutMs,
+        });
+        const output = [
+          `Shell: ${result.shell}`,
+          `Working directory: ${result.workdir}`,
+          `Exit code: ${result.exitCode ?? 'none'}`,
+          result.timedOut ? 'Timed out: yes' : '',
+          result.stdout ? `\nSTDOUT:\n${result.stdout}` : '',
+          result.stderr ? `\nSTDERR:\n${result.stderr}` : '',
+        ].filter(Boolean).join('\n');
+        return { content: [{ type: 'text', text: output }], isError: result.exitCode !== 0 || result.timedOut };
+      }
+
+      if (name === 'apply_patch') {
+        const patch = String(args?.patch || '');
+        if (!patch) throw new Error('"patch" parameter is required.');
+        const changed = await applyFilePatch(shellRoot, patch);
+        return { content: [{ type: 'text', text: `Patch applied successfully:\n${changed.join('\n')}` }] };
+      }
+
       if (name === 'chatgpt_list_profiles') {
         const profiles = client.listProfiles();
         return {
@@ -493,16 +585,86 @@ async function main() {
     }
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  let closeTransport: (() => Promise<void>) | undefined;
+  let closeHttpServer: (() => Promise<void>) | undefined;
+
+  if (options.http) {
+    // Stateless Streamable HTTP keeps this existing Server instance reusable for
+    // remote requests while the tunnel/HTTP process is alive.
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+
+    const httpServer = createServer(async (req, res) => {
+      addCorsHeaders(res);
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (req.url === '/healthz' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, service: 'mcp-chatgpt', endpoint: '/mcp' }));
+        return;
+      }
+      if (req.url !== '/mcp') {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+      if (!hasValidBearerToken(req, httpToken!)) {
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      try {
+        await transport.handleRequest(req, res);
+      } catch (error: any) {
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify({ error: error?.message || String(error) }));
+      }
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(httpPort, httpHost, () => resolve());
+    });
+    console.error(`[MCP HTTP] Streamable HTTP endpoint listening at http://${httpHost}:${httpPort}/mcp`);
+    console.error('[MCP HTTP] Remote access requires the configured Bearer token and an active tunnel.');
+    closeTransport = () => transport.close();
+    closeHttpServer = () => new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  }
 
   const cleanup = async () => {
+    await closeTransport?.();
+    await closeHttpServer?.();
     await client.close();
     process.exit(0);
   };
 
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
+}
+
+function addCorsHeaders(res: ServerResponse): void {
+  res.setHeader('access-control-allow-origin', '*');
+  res.setHeader('access-control-allow-headers', 'authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id');
+  res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('access-control-expose-headers', 'mcp-session-id, mcp-protocol-version, last-event-id');
+}
+
+function hasValidBearerToken(req: IncomingMessage, expectedToken: string): boolean {
+  const value = req.headers.authorization;
+  const prefix = 'Bearer ';
+  if (!value || !value.startsWith(prefix)) return false;
+  const actual = Buffer.from(value.slice(prefix.length));
+  const expected = Buffer.from(expectedToken);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 main().catch((err) => {
