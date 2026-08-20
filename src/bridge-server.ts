@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'node:http';
-import type { ChatOptions, ChatResponse, ConversationHistoryItem } from './types.js';
+import type { ChatOptions, ChatResponse, ConversationHistoryItem, ModelsInfo } from './types.js';
 
 interface PendingRequest {
   resolve: (res: any) => void;
@@ -54,6 +54,18 @@ export class ExtensionBridgeServer {
             const conversations = await this.listConversationsDirect(limit);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ conversations }));
+          } catch (err: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err?.message || String(err) }));
+          }
+          return;
+        }
+
+        if (req.url === '/models' && req.method === 'GET') {
+          try {
+            const models = await this.listModelsDirect();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(models));
           } catch (err: any) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: err?.message || String(err) }));
@@ -154,11 +166,20 @@ export class ExtensionBridgeServer {
 
         if (message.error) {
           pending.reject(new Error(message.error));
+        } else if (message.models) {
+          pending.resolve({
+            models: message.models,
+            currentModel: message.currentModel,
+            reasoningEfforts: message.reasoningEfforts,
+          });
         } else if (message.conversations) {
           pending.resolve(message.conversations);
         } else {
           pending.resolve({
             content: message.content || '',
+            extractedCode: message.extractedCode,
+            imageUrls: message.imageUrls,
+            images: message.images,
             conversationUrl: message.conversationUrl,
             conversationId: message.conversationId,
             profileUsed: this.profileName || 'Chrome Extension',
@@ -166,6 +187,54 @@ export class ExtensionBridgeServer {
         }
       }
     }
+  }
+
+  public async listModels(): Promise<ModelsInfo> {
+    if (this.isConnected()) {
+      return this.listModelsDirect();
+    }
+
+    if (!this.isServerOwner) {
+      const remoteStatus = await this.checkRemoteStatus();
+      if (remoteStatus.connected) {
+        const res = await fetch(`http://127.0.0.1:${this.port}/models`);
+        const data: any = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Bridge request failed');
+        }
+        return data;
+      }
+    }
+
+    return { models: ['GPT-5.6 Sol', 'GPT-5.5', 'o3', 'gpt-4o', 'o1'], currentModel: 'Default' };
+  }
+
+  private async listModelsDirect(): Promise<ModelsInfo> {
+    if (!this.isConnected()) {
+      throw new Error('Chrome Extension is not connected.');
+    }
+
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeoutTimer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Timeout waiting for models list from Chrome Extension'));
+      }, 15000);
+
+      this.pendingRequests.set(requestId, {
+        resolve,
+        reject,
+        timeoutTimer,
+      });
+
+      this.activeWs?.send(
+        JSON.stringify({
+          action: 'list_models',
+          id: requestId,
+        })
+      );
+    });
   }
 
   public async listConversations(limit: number = 30): Promise<ConversationHistoryItem[]> {

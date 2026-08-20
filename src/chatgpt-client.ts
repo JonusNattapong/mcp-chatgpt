@@ -9,6 +9,7 @@ import type {
   ChatGPTStatus,
   ChromeProfileInfo,
   ConversationHistoryItem,
+  ModelsInfo,
 } from './types.js';
 import { ProfileManager } from './profile-manager.js';
 import { ExtensionBridgeServer } from './bridge-server.js';
@@ -242,6 +243,15 @@ export class ChatGPTClient {
       success: true,
       url: this.page.url(),
     };
+  }
+
+  public async listModels(): Promise<ModelsInfo> {
+    const remote = await this.bridgeServer.checkRemoteStatus();
+    if (this.bridgeServer.isConnected() || remote.connected) {
+      return this.bridgeServer.listModels();
+    }
+
+    return { models: ['GPT-5.6 Sol', 'GPT-5.5', 'o3', 'gpt-4o', 'o1'], currentModel: 'Default' };
   }
 
   public async listConversations(limit: number = 30): Promise<ConversationHistoryItem[]> {

@@ -36,6 +36,8 @@ export interface ChatOptions {
 export interface ChatResponse {
   content: string;
   extractedCode?: string[];
+  imageUrls?: string[];
+  images?: Array<{ url: string; alt?: string }>;
   conversationId?: string;
   conversationUrl?: string;
   model?: string;
@@ -58,4 +60,11 @@ export interface ConversationHistoryItem {
   title: string;
   url: string;
 }
+
+export interface ModelsInfo {
+  models: string[];
+  currentModel?: string;
+  reasoningEfforts?: string[];
+}
+
 

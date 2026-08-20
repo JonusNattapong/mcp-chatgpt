@@ -205,6 +205,15 @@ async function main() {
           },
         },
         {
+          name: 'chatgpt_list_models',
+          description:
+            'List all available AI models (e.g. GPT-5.6 Sol, GPT-5.5, o3, gpt-4o, o1) and reasoning effort options for this ChatGPT account.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
           name: 'chatgpt_login',
           description:
             'Open ChatGPT Web in a visible (headed) browser window so the user can log in or solve Captcha challenges.',
@@ -330,6 +339,18 @@ async function main() {
             {
               type: 'text',
               text: JSON.stringify(conversations, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (name === 'chatgpt_list_models') {
+        const models = await client.listModels();
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(models, null, 2),
             },
           ],
         };
