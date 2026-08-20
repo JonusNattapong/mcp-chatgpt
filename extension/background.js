@@ -688,9 +688,20 @@ async function handleGetLatestResponse(msg) {
           }
 
           const images = [];
-          const imgNodes = Array.from(lastContainer.querySelectorAll('img'));
+          const imgNodes = Array.from(
+            lastContainer.querySelectorAll('img, [role="img"]')
+          );
+          if (imgNodes.length === 0) {
+            const allImgs = Array.from(document.querySelectorAll('main img, article img, div.group img'));
+            for (const im of allImgs) {
+              if (!im.closest('[data-message-author-role="user"]')) {
+                imgNodes.push(im);
+              }
+            }
+          }
+
           for (const img of imgNodes) {
-            const src = img.getAttribute('src') || '';
+            const src = img.getAttribute('src') || img.src || '';
             const alt = img.getAttribute('alt') || '';
             if (
               src &&
@@ -698,7 +709,9 @@ async function handleGetLatestResponse(msg) {
               !src.includes('profile') &&
               !src.includes('data:image/svg')
             ) {
-              images.push({ url: src, alt });
+              if (!images.some((it) => it.url === src)) {
+                images.push({ url: src, alt });
+              }
             }
           }
 
