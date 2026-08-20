@@ -1,3 +1,5 @@
+export type LLMProvider = 'chatgpt' | 'gemini' | 'kimi' | 'zai';
+
 export interface ChromeProfileInfo {
   id: string; // e.g. "Default", "Profile 1"
   name: string; // e.g. "Work", "Personal", or Google account name
@@ -7,7 +9,7 @@ export interface ChromeProfileInfo {
   isCurrent?: boolean;
 }
 
-export interface ChatGPTConfig {
+export interface WebLLMConfig {
   userDataDir?: string;
   headless?: boolean;
   cdpEndpoint?: string;
@@ -18,23 +20,29 @@ export interface ChatGPTConfig {
   bridgePort?: number;
 }
 
+// Backward compatibility alias
+export type ChatGPTConfig = WebLLMConfig;
+
 export interface ChatOptions {
+  provider?: LLMProvider;
   message: string;
   newChat?: boolean;
   conversationId?: string;
-  model?: string; // e.g. "gpt-4o", "o3-mini", "o1"
+  model?: string; // e.g. "gpt-4o", "gemini-2.0-flash", "kimi-k1", "glm-4"
   profile?: string; // e.g. "Profile 1", "Work"
-  webSearch?: boolean; // Enable live Web Search
-  reasoningEffort?: 'low' | 'medium' | 'high'; // For o-series models
+  webSearch?: boolean; // Enable live Web Search if supported
+  reasoningEffort?: 'low' | 'medium' | 'high'; // For reasoning models
   imagePaths?: string[]; // Absolute paths to image files to upload
   filePaths?: string[]; // Absolute paths to documents/code files to upload
   autoContinue?: boolean; // Auto click "Continue generating" if response is cut off (default true)
   extractCodeOnly?: boolean; // If true, return only extracted code snippets
-  refreshPage?: boolean; // If true, reload the ChatGPT page before sending the message
+  refreshPage?: boolean; // If true, reload the page before sending the message
+  disableBridge?: boolean; // If true, force using Playwright driver instead of Chrome Extension
   timeoutMs?: number;
 }
 
 export interface ChatResponse {
+  provider?: LLMProvider;
   content: string;
   extractedCode?: string[];
   imageUrls?: string[];
@@ -46,7 +54,8 @@ export interface ChatResponse {
   webSearchUsed?: boolean;
 }
 
-export interface ChatGPTStatus {
+export interface LLMStatus {
+  provider: LLMProvider;
   isInitialized: boolean;
   isLoggedIn: boolean;
   currentUrl: string;
@@ -55,6 +64,9 @@ export interface ChatGPTStatus {
   activeProfile?: string;
   bridgeConnected?: boolean;
 }
+
+// Backward compatibility alias
+export type ChatGPTStatus = LLMStatus;
 
 export interface ConversationHistoryItem {
   id: string;

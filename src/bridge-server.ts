@@ -488,9 +488,12 @@ export class ExtensionBridgeServer {
         JSON.stringify({
           action: 'ask',
           id: requestId,
+          provider: options.provider || 'chatgpt',
           message: options.message,
           newChat: options.newChat,
           conversationId: options.conversationId,
+          model: options.model,
+          reasoningEffort: options.reasoningEffort,
         })
       );
     });

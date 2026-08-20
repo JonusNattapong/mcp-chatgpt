@@ -85,25 +85,33 @@ async function checkAndConnect() {
   }
 }
 
-async function getOrCreateChatGPTTab(targetUrl, isNewChat) {
-  // Find all open ChatGPT tabs
-  const tabs = await chrome.tabs.query({ url: '*://chatgpt.com/*' });
+const PROVIDER_TAB_MAP = {
+  chatgpt: { match: (url) => url.includes('chatgpt.com'), defaultUrl: 'https://chatgpt.com/' },
+  gemini: { match: (url) => url.includes('gemini.google.com'), defaultUrl: 'https://gemini.google.com/app' },
+  kimi: { match: (url) => url.includes('kimi.ai'), defaultUrl: 'https://www.kimi.ai/' },
+  zai: { match: (url) => url.includes('z.ai'), defaultUrl: 'https://chat.z.ai/' },
+};
+
+async function getOrCreateLLMTab(provider = 'chatgpt', targetUrl, isNewChat) {
+  const p = PROVIDER_TAB_MAP[provider] || PROVIDER_TAB_MAP.chatgpt;
+  const allTabs = await chrome.tabs.query({});
+  const tabs = allTabs.filter((t) => t.url && p.match(t.url));
+
+  console.log(`[MCP Bridge] Looking for provider "${provider}". Matching tabs found:`, tabs.length);
+
   if (tabs.length > 0) {
     const activeTab = tabs.find((t) => t.active) || tabs[tabs.length - 1];
 
-    // Bring window to front
     if (activeTab.windowId) {
       await chrome.windows.update(activeTab.windowId, { focused: true }).catch(() => {});
     }
     await chrome.tabs.update(activeTab.id, { active: true }).catch(() => {});
 
-    // If switching to a specific conversation or opening a fresh chat
     if (targetUrl) {
-      const isCurrentlyRoot = activeTab.url === 'https://chatgpt.com/' || activeTab.url === 'https://chatgpt.com';
-      if (isNewChat && !isCurrentlyRoot) {
-        await chrome.tabs.update(activeTab.id, { url: 'https://chatgpt.com/' });
+      if (isNewChat && activeTab.url !== p.defaultUrl) {
+        await chrome.tabs.update(activeTab.id, { url: p.defaultUrl });
         await waitForTabReady(activeTab.id);
-      } else if (!isNewChat && targetUrl.includes('/c/') && activeTab.url !== targetUrl) {
+      } else if (!isNewChat && activeTab.url !== targetUrl) {
         await chrome.tabs.update(activeTab.id, { url: targetUrl });
         await waitForTabReady(activeTab.id);
       }
@@ -112,14 +120,16 @@ async function getOrCreateChatGPTTab(targetUrl, isNewChat) {
     return activeTab;
   }
 
-  // Create new tab
+  console.log(`[MCP Bridge] No existing tab found for "${provider}". Opening new tab...`);
   const newTab = await chrome.tabs.create({
-    url: targetUrl || 'https://chatgpt.com',
+    url: targetUrl || p.defaultUrl,
     active: true,
   });
   await waitForTabReady(newTab.id);
   return newTab;
 }
+
+const getOrCreateChatGPTTab = (targetUrl, isNewChat) => getOrCreateLLMTab('chatgpt', targetUrl, isNewChat);
 
 function waitForTabReady(tabId) {
   return new Promise((resolve) => {
@@ -135,21 +145,31 @@ function waitForTabReady(tabId) {
 
 // MAIN world execution functions
 async function handleAskRequest(msg) {
-  const { id, message: messageText, newChat, conversationId, model, reasoningEffort } = msg;
+  const { id, message: messageText, newChat, conversationId, model, reasoningEffort, provider = 'chatgpt' } = msg;
+  console.log(`[MCP Bridge] handleAskRequest for provider: "${provider}", message: "${messageText.slice(0, 30)}..."`);
 
   let targetUrl = null;
+  const pConfig = PROVIDER_TAB_MAP[provider] || PROVIDER_TAB_MAP.chatgpt;
   if (conversationId) {
-    targetUrl = conversationId.startsWith('http')
-      ? conversationId
-      : `https://chatgpt.com/c/${conversationId}`;
+    if (conversationId.startsWith('http')) {
+      targetUrl = conversationId;
+    } else if (provider === 'gemini') {
+      targetUrl = `https://gemini.google.com/app/${conversationId}`;
+    } else if (provider === 'kimi') {
+      targetUrl = `https://www.kimi.ai/chat/${conversationId}`;
+    } else if (provider === 'zai') {
+      targetUrl = `https://chat.z.ai/c/${conversationId}`;
+    } else {
+      targetUrl = `https://chatgpt.com/c/${conversationId}`;
+    }
   } else if (newChat) {
-    targetUrl = 'https://chatgpt.com/';
+    targetUrl = pConfig.defaultUrl;
   }
 
   try {
-    const tab = await getOrCreateChatGPTTab(targetUrl, newChat);
+    const tab = await getOrCreateLLMTab(provider, targetUrl, newChat);
     if (!tab || !tab.id) {
-      throw new Error('Unable to find or open ChatGPT tab');
+      throw new Error(`Unable to find or open ${provider} tab`);
     }
 
     if (msg.refreshPage) {
@@ -265,7 +285,7 @@ async function handleAskRequest(msg) {
         let textarea = null;
         for (let i = 0; i < 25; i++) {
           textarea = document.querySelector(
-            '#prompt-textarea, div[contenteditable="true"], div.ProseMirror, textarea'
+            '#prompt-textarea, .chat-input-editor, rich-textarea div[contenteditable="true"], div[contenteditable="true"], div.ProseMirror, textarea'
           );
           if (textarea) break;
           await new Promise((r) => setTimeout(r, 300));
@@ -275,66 +295,74 @@ async function handleAskRequest(msg) {
           return { error: 'Prompt textarea not found after waiting' };
         }
 
-        const prevCount = document.querySelectorAll('.markdown').length;
+        const prevCount = document.querySelectorAll(
+          '.markdown, model-response, div.chat-item-assistant, div[class*="segment-assistant"], div[data-role="assistant"]'
+        ).length;
 
         textarea.focus();
 
-        // 1. Target paragraph
-        let p = textarea.querySelector('p');
-        if (!p) {
-          p = document.createElement('p');
-          textarea.appendChild(p);
+        if (textarea.tagName.toLowerCase() === 'textarea' || textarea.tagName.toLowerCase() === 'input') {
+          const proto = textarea.tagName.toLowerCase() === 'textarea' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(textarea, text);
+          } else {
+            textarea.value = text;
+          }
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          textarea.dispatchEvent(new Event('change', { bubbles: true }));
+          textarea.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+        } else {
+          // ChatGPT / ProseMirror / Rich editors
+          try {
+            document.execCommand('selectAll', false, null);
+            const ok = document.execCommand('insertText', false, text);
+            if (!ok) {
+              let p = textarea.querySelector('p') || textarea;
+              p.textContent = text;
+              textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+            }
+          } catch (e) {
+            let p = textarea.querySelector('p') || textarea;
+            p.textContent = text;
+            textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+          }
+
+          // Fallback paste
+          try {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+            textarea.dispatchEvent(
+              new ClipboardEvent('paste', {
+                clipboardData: dt,
+                bubbles: true,
+                cancelable: true,
+              })
+            );
+          } catch (e) {}
+
+          textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          textarea.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        p.textContent = text;
 
-        // 2. Dispatch InputEvent on both paragraph and textarea
-        const inputEv = new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          inputType: 'insertText',
-          data: text,
-        });
-        p.dispatchEvent(inputEv);
-        textarea.dispatchEvent(inputEv);
-
-        // 3. Selection range + execCommand
-        try {
-          const range = document.createRange();
-          range.selectNodeContents(p);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-          document.execCommand('insertText', false, text);
-        } catch (e) {}
-
-        // 4. Dispatch paste fallback
-        try {
-          const dt = new DataTransfer();
-          dt.setData('text/plain', text);
-          textarea.dispatchEvent(
-            new ClipboardEvent('paste', {
-              clipboardData: dt,
-              bubbles: true,
-              cancelable: true,
-            })
-          );
-        } catch (e) {}
-
-        textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-        textarea.dispatchEvent(new Event('change', { bubbles: true }));
-
-        // 5. Submit after 350ms
+        // Submit after 350ms
         setTimeout(() => {
           const form = textarea.closest('form') || document;
           const sendBtn =
             document.querySelector('button[data-testid="send-button"]') ||
             form.querySelector('button[data-testid="send-button"]') ||
+            document.querySelector('button.sendMessageButton') ||
+            document.querySelector('.sendMessageButton') ||
+            document.querySelector('.send-button-container:not(.disabled)') ||
             document.querySelector('button[aria-label*="Send prompt"]') ||
+            document.querySelector('button[aria-label*="Send"]') ||
             document.querySelector('button[aria-label*="ส่งข้อความ"]') ||
-            document.querySelector('button[aria-label*="ส่ง"]');
+            document.querySelector('button[aria-label*="ส่ง"]') ||
+            document.querySelector('button[type="submit"]') ||
+            document.querySelector('div[class*="send-button"]:not(.disabled)') ||
+            document.querySelector('svg.send-icon');
 
-          if (sendBtn && !sendBtn.disabled) {
+          if (sendBtn && !sendBtn.disabled && !sendBtn.classList?.contains('disabled')) {
             sendBtn.click();
           } else {
             textarea.dispatchEvent(
@@ -377,15 +405,23 @@ async function handleAskRequest(msg) {
         args: [prevCount],
         func: (count) => {
           const stopBtn = document.querySelector(
-            'button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="หยุด"]'
+            'button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="หยุด"], button[class*="stop"], div[class*="stop"], mat-progress-spinner, [class*="stop-button"], svg[class*="stop"], .sendMessageButton svg rect, .sendMessageButton svg path[d*="rect"]'
           );
           const turns = Array.from(
             document.querySelectorAll('[data-testid^="conversation-turn-"]')
           ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
 
-          const mdElements = Array.from(document.querySelectorAll('.markdown')).filter(
-            (el) => !el.closest('[data-message-author-role="user"]')
-          );
+          let mdElements = Array.from(
+            document.querySelectorAll(
+              '.markdown-body, .prose, .markdown, model-response, div.chat-item-assistant, div[class*="segment-assistant"], div[data-role="assistant"], div[class*="message-assistant"], div[class*="chat-content"], [class*="segment"]:not([class*="user"])'
+            )
+          ).filter((el) => !el.closest('[data-message-author-role="user"]') && !el.closest('.chat-input-editor'));
+
+          if (mdElements.length === 0) {
+            mdElements = Array.from(
+              document.querySelectorAll('[class*="assistant"], [class*="chat-item"]:not([class*="user"]), [class*="message"]:not([class*="user"])')
+            ).filter((el) => !el.closest('[data-message-author-role="user"]') && !el.closest('.chat-input-editor'));
+          }
 
           let currentText = '';
           const codes = [];
@@ -394,8 +430,8 @@ async function handleAskRequest(msg) {
           const lastContainer = turns[turns.length - 1] || mdElements[mdElements.length - 1];
 
           if (lastContainer) {
-            const md = lastContainer.querySelector('.markdown') || lastContainer;
-            currentText = (md.innerText || '').trim();
+            const md = lastContainer.querySelector('.markdown-body') || lastContainer.querySelector('.prose') || lastContainer.querySelector('.markdown') || lastContainer.querySelector('[class*="content"]') || lastContainer.querySelector('[class*="text"]') || lastContainer;
+            currentText = (md.innerText || '').replace(/^Thinking\.\.\..*?Skip\s*/s, '').trim();
 
             const codeNodes = lastContainer.querySelectorAll('pre code, pre');
             for (const cn of codeNodes) {
@@ -770,20 +806,26 @@ async function handleGetLatestResponse(msg) {
         world: 'MAIN',
         func: () => {
           const turns = Array.from(
-            document.querySelectorAll('[data-testid^="conversation-turn-"]')
+            document.querySelectorAll('[data-testid^="conversation-turn-"], [data-message-author-role="assistant"], article')
           ).filter((el) => !el.querySelector('[data-message-author-role="user"]'));
 
-          const mdElements = Array.from(document.querySelectorAll('.markdown')).filter(
+          const mdElements = Array.from(document.querySelectorAll('.markdown, .markdown-body, [class*="markdown"], .prose')).filter(
             (el) => !el.closest('[data-message-author-role="user"]')
           );
 
-          const lastContainer = turns[turns.length - 1] || mdElements[mdElements.length - 1];
+          const lastContainer =
+            turns[turns.length - 1] ||
+            mdElements[mdElements.length - 1] ||
+            document.querySelector('[data-message-author-role="assistant"]') ||
+            document.querySelector('article:last-of-type') ||
+            document.querySelector('main');
+
           if (!lastContainer) {
             return null;
           }
 
-          const md = lastContainer.querySelector('.markdown') || lastContainer;
-          const currentText = (md.innerText || '').trim();
+          const md = lastContainer.querySelector('.markdown') || lastContainer.querySelector('.markdown-body') || lastContainer;
+          const currentText = (md.innerText || lastContainer.innerText || '').trim();
 
           const codes = [];
           const codeNodes = lastContainer.querySelectorAll('pre code, pre');

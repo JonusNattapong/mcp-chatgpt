@@ -3,26 +3,28 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import type {
-  ChatGPTConfig,
+  WebLLMConfig,
   ChatOptions,
   ChatResponse,
-  ChatGPTStatus,
+  LLMStatus,
+  LLMProvider,
   ChromeProfileInfo,
   ConversationHistoryItem,
   ModelsInfo,
 } from './types.js';
 import { ProfileManager } from './profile-manager.js';
 import { ExtensionBridgeServer } from './bridge-server.js';
+import { DriverManager } from './drivers/index.js';
 
 export class ChatGPTClient {
-  private config: ChatGPTConfig;
+  private config: WebLLMConfig;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private isBusy = false;
   private bridgeServer: ExtensionBridgeServer;
   private selectedProfile: ChromeProfileInfo | null = null;
 
-  constructor(config: ChatGPTConfig = {}) {
+  constructor(config: WebLLMConfig = {}) {
     const defaultDataDir = path.join(os.homedir(), '.mcp-chatgpt', 'browser-data');
     this.config = {
       userDataDir: config.userDataDir || process.env.CHATGPT_USER_DATA_DIR || defaultDataDir,
@@ -76,7 +78,7 @@ export class ChatGPTClient {
     return this.selectedProfile;
   }
 
-  public async initialize(options: { headed?: boolean; profile?: string } = {}): Promise<void> {
+  public async initialize(options: { headed?: boolean; profile?: string; provider?: LLMProvider } = {}): Promise<void> {
     if (options.profile) {
       this.selectProfile(options.profile);
     }
@@ -96,7 +98,6 @@ export class ChatGPTClient {
     } else {
       let dataDir = this.config.userDataDir!;
 
-      // If a Chrome profile is selected, use dedicated profile directory
       if (this.selectedProfile) {
         dataDir = ProfileManager.getProfileIsolatedDir(this.selectedProfile.id);
       }
@@ -124,7 +125,6 @@ export class ChatGPTClient {
       try {
         this.context = await chromium.launchPersistentContext(dataDir, launchOptions);
       } catch (err: any) {
-        // If system chrome fails or is locked, retry with standard chromium
         if (launchOptions.channel) {
           delete launchOptions.channel;
           this.context = await chromium.launchPersistentContext(dataDir, launchOptions);
@@ -143,23 +143,11 @@ export class ChatGPTClient {
       });
     });
 
-    await this.ensureChatGPTPage();
+    const driver = DriverManager.getDriver(options.provider || 'chatgpt');
+    await driver.ensurePage(this.page);
   }
 
-  private async ensureChatGPTPage(): Promise<void> {
-    if (!this.page) throw new Error('Browser page is not initialized');
-
-    const currentUrl = this.page.url();
-    if (!currentUrl.includes('chatgpt.com')) {
-      await this.page.goto('https://chatgpt.com', {
-        waitUntil: 'domcontentloaded',
-        timeout: 45_000,
-      });
-      await this.page.waitForTimeout(2000);
-    }
-  }
-
-  public async getStatus(): Promise<ChatGPTStatus> {
+  public async getStatus(provider: LLMProvider = 'chatgpt'): Promise<LLMStatus> {
     let isBridgeConnected = this.bridgeServer.isConnected();
     let bridgeProfile = this.bridgeServer.getConnectedProfileName();
 
@@ -173,10 +161,11 @@ export class ChatGPTClient {
 
     if (isBridgeConnected) {
       return {
+        provider,
         isInitialized: true,
         isLoggedIn: true,
-        currentUrl: 'https://chatgpt.com (via Chrome Extension)',
-        title: 'ChatGPT Web (Extension Bridge)',
+        currentUrl: `${provider} (via Chrome Extension)`,
+        title: `${provider} Web (Extension Bridge)`,
         activeProfile: bridgeProfile || 'Chrome Extension',
         bridgeConnected: true,
       };
@@ -184,6 +173,7 @@ export class ChatGPTClient {
 
     if (!this.page || this.page.isClosed()) {
       return {
+        provider,
         isInitialized: false,
         isLoggedIn: false,
         currentUrl: '',
@@ -193,56 +183,26 @@ export class ChatGPTClient {
       };
     }
 
-    const currentUrl = this.page.url();
-    const title = await this.page.title();
-
-    const hasPromptTextarea = (await this.page.$('#prompt-textarea')) !== null;
-    const hasLoginButton = (await this.page.$('button[data-testid="login-button"], a[href*="/auth/login"]')) !== null;
-    const isLoggedIn = hasPromptTextarea || (!hasLoginButton && !currentUrl.includes('/auth/login'));
-
-    let currentModel: string | undefined;
-    try {
-      const modelButton = await this.page.$('button[data-testid="model-switcher-dropdown-button"]');
-      if (modelButton) {
-        currentModel = (await modelButton.innerText()).trim();
-      }
-    } catch {
-      // ignore
-    }
-
-    return {
-      isInitialized: true,
-      isLoggedIn,
-      currentUrl,
-      title,
-      model: currentModel,
-      activeProfile: this.selectedProfile ? `${this.selectedProfile.name} (${this.selectedProfile.id})` : undefined,
-      bridgeConnected: false,
-    };
+    const driver = DriverManager.getDriver(provider);
+    const status = await driver.getStatus(this.page);
+    status.activeProfile = this.selectedProfile ? `${this.selectedProfile.name} (${this.selectedProfile.id})` : undefined;
+    return status;
   }
 
-  public async newChat(): Promise<{ success: boolean; url: string }> {
+  public async newChat(provider: LLMProvider = 'chatgpt'): Promise<{ success: boolean; url: string }> {
     const remote = await this.bridgeServer.checkRemoteStatus();
     if (this.bridgeServer.isConnected() || remote.connected) {
       return {
         success: true,
-        url: 'https://chatgpt.com',
+        url: provider === 'chatgpt' ? 'https://chatgpt.com' : provider === 'gemini' ? 'https://gemini.google.com/app' : provider === 'kimi' ? 'https://www.kimi.ai/' : 'https://chat.z.ai/',
       };
     }
 
-    await this.initialize();
+    await this.initialize({ provider });
     if (!this.page) throw new Error('Failed to initialize page');
 
-    await this.page.goto('https://chatgpt.com', {
-      waitUntil: 'domcontentloaded',
-      timeout: 30_000,
-    });
-    await this.page.waitForTimeout(1500);
-
-    return {
-      success: true,
-      url: this.page.url(),
-    };
+    const driver = DriverManager.getDriver(provider);
+    return await driver.newChat(this.page);
   }
 
   public async getLatestResponse(conversationId?: string, refreshFirst = true): Promise<ChatResponse> {
@@ -317,13 +277,15 @@ export class ChatGPTClient {
   }
 
   public async ask(options: ChatOptions): Promise<ChatResponse> {
+    const provider = options.provider || 'chatgpt';
+
     if (options.profile) {
       this.selectProfile(options.profile);
     }
 
-    // 1. If Extension Bridge is connected (local or remote daemon), prioritize sending via active Chrome tab
-    let isBridgeActive = this.bridgeServer.isConnected();
-    if (!isBridgeActive) {
+    // 1. Check Chrome Extension Bridge first
+    let isBridgeActive = !options.disableBridge && this.bridgeServer.isConnected();
+    if (!options.disableBridge && !isBridgeActive) {
       const remote = await this.bridgeServer.checkRemoteStatus();
       isBridgeActive = remote.connected;
     }
@@ -332,187 +294,25 @@ export class ChatGPTClient {
       return await this.bridgeServer.ask(options);
     }
 
-    // 2. Otherwise automate via Playwright Persistent Browser
+    // 2. Automate via Playwright Persistent Browser
     if (this.isBusy) {
-      throw new Error('ChatGPT client is currently busy processing another request.');
+      throw new Error(`LLM client is currently busy processing another request.`);
     }
 
     this.isBusy = true;
     try {
-      await this.initialize();
+      await this.initialize({ provider });
       if (!this.page) throw new Error('Failed to initialize page');
 
-      if (options.conversationId) {
-        const targetUrl = options.conversationId.startsWith('http')
-          ? options.conversationId
-          : `https://chatgpt.com/c/${options.conversationId}`;
-        if (this.page.url() !== targetUrl) {
-          await this.page.goto(targetUrl, {
-            waitUntil: 'domcontentloaded',
-            timeout: 30_000,
-          });
-          await this.page.waitForTimeout(1500);
-        }
-      } else if (options.newChat) {
-        await this.newChat();
-      } else {
-        await this.ensureChatGPTPage();
-      }
-
-      const textarea = await this.page.waitForSelector('#prompt-textarea', {
-        timeout: 15_000,
-      }).catch(() => null);
-
-      if (!textarea) {
-        const status = await this.getStatus();
-        if (!status.isLoggedIn) {
-          throw new Error(
-            'ChatGPT Web is not logged in or prompt textarea is unavailable. Please run login mode first or install the Chrome Extension.'
-          );
-        }
-        throw new Error('Could not find #prompt-textarea on ChatGPT web page.');
-      }
-
-      // If files/images provided, upload via file input
-      const uploadFiles = [...(options.imagePaths || []), ...(options.filePaths || [])];
-      if (uploadFiles.length > 0) {
-        const fileInput = await this.page.$('input[type="file"]');
-        if (fileInput) {
-          await fileInput.setInputFiles(uploadFiles);
-          await this.page.waitForTimeout(1000);
-        }
-      }
-
-      // If Web Search requested, click search button
-      if (options.webSearch) {
-        const searchBtn = await this.page.$(
-          'button[aria-label*="Search"], button[aria-label*="ค้นหา"], button[data-testid="search-web-button"]'
-        );
-        if (searchBtn) {
-          await searchBtn.click();
-          await this.page.waitForTimeout(300);
-        }
-      }
-
-      const prevAssistantMessagesCount = await this.page.$$eval(
-        '[data-message-author-role="assistant"]',
-        (els) => els.length
-      );
-
-      await textarea.click();
-      await this.page.waitForTimeout(200);
-
-      await textarea.fill(options.message);
-      await this.page.waitForTimeout(300);
-
-      const sendButton = await this.page.$(
-        'button[data-testid="send-button"], button[aria-label="Send prompt"]'
-      );
-
-      if (sendButton && (await sendButton.isEnabled())) {
-        await sendButton.click();
-      } else {
-        await this.page.keyboard.press('Enter');
-      }
-
-      const responseData = await this.waitForAssistantResponse(
-        prevAssistantMessagesCount,
-        options.timeoutMs || this.config.timeoutMs || 120_000,
-        options.autoContinue !== false
-      );
-
-      const finalUrl = this.page.url();
-      let conversationId: string | undefined;
-      const match = finalUrl.match(/\/c\/([a-zA-Z0-9-]+)/);
-      if (match) {
-        conversationId = match[1];
-      }
-
-      let content = responseData.text;
-      if (options.extractCodeOnly && responseData.codes.length > 0) {
-        content = responseData.codes.join('\n\n---\n\n');
-      }
-
-      return {
-        content,
-        extractedCode: responseData.codes.length > 0 ? responseData.codes : undefined,
-        conversationId,
-        conversationUrl: finalUrl,
-        profileUsed: this.selectedProfile ? `${this.selectedProfile.name} (${this.selectedProfile.id})` : 'Default Profile',
-        webSearchUsed: options.webSearch,
-      };
+      const driver = DriverManager.getDriver(provider);
+      const response = await driver.sendMessage(this.page, options);
+      response.profileUsed = this.selectedProfile
+        ? `${this.selectedProfile.name} (${this.selectedProfile.id})`
+        : 'Default Profile';
+      return response;
     } finally {
       this.isBusy = false;
     }
-  }
-
-  private async waitForAssistantResponse(
-    previousCount: number,
-    timeoutMs: number,
-    autoContinue = true
-  ): Promise<{ text: string; codes: string[] }> {
-    if (!this.page) throw new Error('Page is not initialized');
-
-    const startTime = Date.now();
-    const pollInterval = 600;
-    let lastText = '';
-    let stableCount = 0;
-    let hasStartedGenerating = false;
-    let codes: string[] = [];
-
-    while (Date.now() - startTime < timeoutMs) {
-      await this.page.waitForTimeout(pollInterval);
-
-      const stopButton = await this.page.$(
-        'button[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]'
-      );
-
-      if (stopButton) {
-        hasStartedGenerating = true;
-      }
-
-      const assistantMessages = await this.page.$$(
-        '[data-message-author-role="assistant"]'
-      );
-
-      if (assistantMessages.length > previousCount) {
-        hasStartedGenerating = true;
-        const lastMessageEl = assistantMessages[assistantMessages.length - 1];
-
-        const text = await lastMessageEl.evaluate((el) => {
-          const markdownEl = el.querySelector('.markdown') || el;
-          return (markdownEl as HTMLElement).innerText.trim();
-        });
-
-        if (text.length > 0) {
-          if (text === lastText) {
-            stableCount++;
-          } else {
-            stableCount = 0;
-            lastText = text;
-          }
-
-          if ((!stopButton && hasStartedGenerating && stableCount >= 2) || stableCount >= 4) {
-            codes = await lastMessageEl.$$eval('pre code, pre', (els) =>
-              els.map((e) => e.textContent?.trim() || '').filter(Boolean)
-            );
-            return { text: lastText, codes };
-          }
-        }
-      } else if (hasStartedGenerating && !stopButton) {
-        if (lastText.length > 0) {
-          return { text: lastText, codes };
-        }
-      }
-    }
-
-    if (lastText.length > 0) {
-      return { text: lastText, codes };
-    }
-
-    throw new Error(
-      `Timeout waiting for ChatGPT response after ${Math.round(timeoutMs / 1000)} seconds.`
-    );
   }
 
   public async close(): Promise<void> {
