@@ -339,6 +339,18 @@ async function handleAskRequest(msg) {
           stableCount++;
         }
 
+        const isStillGeneratingImage =
+          state.text.includes('กำลังสร้างภาพ') ||
+          state.text.includes('Creating image') ||
+          state.text.includes('รอสักครู่') ||
+          (state.text.includes('กำลังคิด') && state.images.length === 0);
+
+        if (isStillGeneratingImage) {
+          hasStarted = true;
+          stableCount = 0;
+          continue;
+        }
+
         // Completion condition: Stop button is gone and content is stable
         if ((!state.isGenerating && hasStarted && stableCount >= 2) || stableCount >= 6) {
           const match = state.url.match(/\/c\/([a-zA-Z0-9-]+)/);
