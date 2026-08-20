@@ -127,6 +127,36 @@ Options:
 
 ---
 
+## 🤖 AI Assistant System Prompt & Integration Instruction
+
+Copy and paste the following instruction directly into your AI Assistant (Cursor Rules, Claude System Prompt, Antigravity Custom Instructions, Cline, Roo Code) so your AI automatically knows **when** and **how** to call `mcp-chatgpt`:
+
+````markdown
+# 🛠️ Instruction: Setup and Integrate `mcp-chatgpt` MCP Server
+
+You are integrated with the `mcp-chatgpt` MCP server, granting you direct access to ChatGPT Web capabilities (o3-mini, o1, GPT-4o, live Web Search, DALL-E, and multimodal file analysis).
+
+### 🎯 When to Automatically Use `chatgpt_ask`:
+
+1. **Deep Reasoning & Hard Coding Tasks**:
+   - For complex architecture designs, difficult debugging, or advanced algorithms, call `chatgpt_ask` with:
+     `{ "model": "o3-mini", "reasoning_effort": "high", "extract_code_only": true }`
+2. **Live Web Information & Current News**:
+   - When the user asks for up-to-date news, today's market data, or the latest documentation of newly updated packages, call:
+     `{ "web_search": true }`
+3. **Image Generation (DALL-E 3)**:
+   - When the user requests an image, logo, or icon design, request it via `chatgpt_ask` and present the returned `imageUrls` directly to the user.
+4. **Heavy Document & File Analysis**:
+   - When analyzing CSV, Excel spreadsheets, PDFs, or large source code files, attach them via `file_paths` or `image_paths`.
+5. **Continuous Conversations**:
+   - Always track and pass `conversation_id` to continue in the same thread, or pass `new_chat: true` when starting an unrelated topic.
+6. **Finding Past Chats**:
+   - Call `chatgpt_list_conversations` to search for existing topic IDs before resuming a specific past conversation.
+````
+
+---
+
 ## 📄 License
 
 MIT
+
