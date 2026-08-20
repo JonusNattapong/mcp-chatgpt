@@ -162,12 +162,18 @@ async function handleAskRequest(msg) {
       target: { tabId: tab.id },
       world: 'MAIN',
       args: [messageText],
-      func: (text) => {
-        const textarea = document.querySelector(
-          '#prompt-textarea, div[contenteditable="true"], div.ProseMirror, textarea'
-        );
+      func: async (text) => {
+        let textarea = null;
+        for (let i = 0; i < 25; i++) {
+          textarea = document.querySelector(
+            '#prompt-textarea, div[contenteditable="true"], div.ProseMirror, textarea'
+          );
+          if (textarea) break;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+
         if (!textarea) {
-          return { error: 'Prompt textarea not found' };
+          return { error: 'Prompt textarea not found after waiting' };
         }
 
         const prevCount = document.querySelectorAll('.markdown').length;
