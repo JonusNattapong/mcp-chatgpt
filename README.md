@@ -25,7 +25,8 @@ An MCP (Model Context Protocol) server that allows AI assistants (such as Google
 
 | Tool | Parameters | Description |
 | :--- | :--- | :--- |
-| `chatgpt_ask` | `message` (string, required)<br>`web_search` (boolean, optional)<br>`model` (string, optional)<br>`reasoning_effort` ("low"\|"medium"\|"high", optional)<br>`image_paths` (string[], optional)<br>`file_paths` (string[], optional)<br>`extract_code_only` (boolean, optional)<br>`auto_continue` (boolean, optional)<br>`profile` (string, optional)<br>`new_chat` (boolean, optional)<br>`conversation_id` (string, optional)<br>`timeout_ms` (number, optional) | Send prompt/question to ChatGPT Web with advanced controls and return assistant response. |
+| `chatgpt_ask` | `message` (string, required)<br>`web_search` (boolean, optional)<br>`model` (string, optional)<br>`reasoning_effort` ("low"\|"medium"\|"high", optional)<br>`image_paths` (string[], optional)<br>`file_paths` (string[], optional)<br>`extract_code_only` (boolean, optional)<br>`auto_continue` (boolean, optional)<br>`refresh_page` (boolean, optional)<br>`profile` (string, optional)<br>`new_chat` (boolean, optional)<br>`conversation_id` (string, optional)<br>`timeout_ms` (number, optional) | Send prompt/question to ChatGPT Web with advanced controls and return assistant response. |
+| `chatgpt_reload` | None | Reload and refresh the current ChatGPT Web page to recover from stuck states or connection glitches. |
 | `chatgpt_list_models` | None | List all available AI models (GPT-5.6 Sol, GPT-5.5, o3, GPT-4o, o1) and reasoning effort options for this account. |
 | `chatgpt_list_conversations` | `limit` (number, optional) | List recent conversation topics and IDs directly from the ChatGPT sidebar to search or resume chats. |
 | `chatgpt_list_profiles` | None | Lists all detected Google Chrome profiles on this computer with Profile ID, Name, and Email. |

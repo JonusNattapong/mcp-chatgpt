@@ -141,6 +141,10 @@ async function main() {
                 description:
                   'Optional conversation ID (e.g. "67b...") or conversation URL (e.g. "https://chatgpt.com/c/...") to continue a specific thread.',
               },
+              refresh_page: {
+                type: 'boolean',
+                description: 'Set to true to reload/refresh the ChatGPT page before sending this message (useful when stuck).',
+              },
               timeout_ms: {
                 type: 'number',
                 description: 'Optional timeout in milliseconds to wait for the complete answer.',
@@ -176,6 +180,14 @@ async function main() {
         {
           name: 'chatgpt_new_chat',
           description: 'Start a clean/new conversation on ChatGPT Web.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'chatgpt_reload',
+          description: 'Reload and refresh the current ChatGPT Web page to fix stuck conversations or connection glitches.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -284,6 +296,7 @@ async function main() {
         const filePaths = Array.isArray(args?.file_paths) ? (args.file_paths as string[]) : undefined;
         const newChat = Boolean(args?.new_chat);
         const conversationId = args?.conversation_id ? String(args.conversation_id) : undefined;
+        const refreshPage = Boolean(args?.refresh_page);
         const timeoutMs = args?.timeout_ms ? Number(args.timeout_ms) : undefined;
 
         const response = await client.ask({
@@ -298,6 +311,7 @@ async function main() {
           filePaths,
           newChat,
           conversationId,
+          refreshPage,
           timeoutMs,
         });
 
@@ -308,15 +322,38 @@ async function main() {
           },
         ];
 
-        let metaText = `\n\n---\n*Profile:* ${response.profileUsed || 'Default'} | *Conversation URL:* ${response.conversationUrl || 'https://chatgpt.com'}`;
-        if (response.webSearchUsed) metaText += ' | *Web Search:* Enabled 🌐';
+        if (response.extractedCode && response.extractedCode.length > 0) {
+          contents.push({
+            type: 'text',
+            text: `\n\n### Extracted Code Blocks:\n\`\`\`\n${response.extractedCode.join('\n\n')}\n\`\`\``,
+          });
+        }
+
+        if (response.imageUrls && response.imageUrls.length > 0) {
+          contents.push({
+            type: 'text',
+            text: `\n\n### Generated Images:\n${response.imageUrls.map((u) => `![Generated Image](${u})`).join('\n')}`,
+          });
+        }
 
         contents.push({
           type: 'text',
-          text: metaText,
+          text: `\n\n---\n*Profile:* ${response.profileUsed || 'Default'}${response.model ? ` | *Model:* ${response.model}` : ''}${response.webSearchUsed ? ' | *Web Search:* Enabled' : ''}${response.conversationUrl ? ` | *Conversation URL:* ${response.conversationUrl}` : ''}`,
         });
 
         return { content: contents };
+      }
+
+      if (name === 'chatgpt_reload') {
+        const result = await client.reloadPage();
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.message || 'ChatGPT page reloaded successfully.',
+            },
+          ],
+        };
       }
 
       if (name === 'chatgpt_new_chat') {

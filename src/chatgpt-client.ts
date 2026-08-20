@@ -245,6 +245,18 @@ export class ChatGPTClient {
     };
   }
 
+  public async reloadPage(): Promise<{ success: boolean; message: string }> {
+    const remote = await this.bridgeServer.checkRemoteStatus();
+    if (this.bridgeServer.isConnected() || remote.connected) {
+      return this.bridgeServer.reloadPage();
+    }
+
+    await this.initialize();
+    if (!this.page) throw new Error('Browser is not initialized');
+    await this.page.reload({ waitUntil: 'domcontentloaded' });
+    return { success: true, message: 'Page reloaded' };
+  }
+
   public async listModels(): Promise<ModelsInfo> {
     const remote = await this.bridgeServer.checkRemoteStatus();
     if (this.bridgeServer.isConnected() || remote.connected) {

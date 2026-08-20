@@ -30,6 +30,7 @@ export interface ChatOptions {
   filePaths?: string[]; // Absolute paths to documents/code files to upload
   autoContinue?: boolean; // Auto click "Continue generating" if response is cut off (default true)
   extractCodeOnly?: boolean; // If true, return only extracted code snippets
+  refreshPage?: boolean; // If true, reload the ChatGPT page before sending the message
   timeoutMs?: number;
 }
 

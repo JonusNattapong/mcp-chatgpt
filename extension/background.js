@@ -60,6 +60,8 @@ async function checkAndConnect() {
           await handleListConversations(msg);
         } else if (msg.action === 'list_models') {
           await handleListModels(msg);
+        } else if (msg.action === 'reload') {
+          await handleReloadRequest(msg);
         }
       } catch (err) {
         console.error('[MCP Bridge] Error handling message:', err);
@@ -146,6 +148,11 @@ async function handleAskRequest(msg) {
     const tab = await getOrCreateChatGPTTab(targetUrl, newChat);
     if (!tab || !tab.id) {
       throw new Error('Unable to find or open ChatGPT tab');
+    }
+
+    if (msg.refreshPage) {
+      await chrome.tabs.reload(tab.id);
+      await waitForTabReady(tab.id);
     }
 
     // Step 1: Type text and submit in MAIN World
@@ -515,6 +522,41 @@ async function handleListModels(msg) {
           models: data.models,
           currentModel: data.currentModel,
           reasoningEfforts: data.reasoningEfforts,
+        })
+      );
+    }
+  } catch (err) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          action: 'response',
+          id,
+          error: err.message || String(err),
+        })
+      );
+    }
+  }
+}
+
+async function handleReloadRequest(msg) {
+  const { id } = msg;
+
+  try {
+    const tab = await getOrCreateChatGPTTab();
+    if (!tab || !tab.id) {
+      throw new Error('Unable to find or open ChatGPT tab');
+    }
+
+    await chrome.tabs.reload(tab.id);
+    await waitForTabReady(tab.id);
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          action: 'response',
+          id,
+          content: 'ChatGPT page reloaded successfully.',
+          reloaded: true,
         })
       );
     }

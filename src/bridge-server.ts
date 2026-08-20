@@ -73,6 +73,18 @@ export class ExtensionBridgeServer {
           return;
         }
 
+        if ((req.url === '/reload' || req.url === '/refresh') && (req.method === 'GET' || req.method === 'POST')) {
+          try {
+            const result = await this.reloadPageDirect();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (err: any) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err?.message || String(err) }));
+          }
+          return;
+        }
+
         if (req.url === '/ask' && req.method === 'POST') {
           let body = '';
           req.on('data', (chunk) => {
@@ -207,6 +219,54 @@ export class ExtensionBridgeServer {
     }
 
     return { models: ['GPT-5.6 Sol', 'GPT-5.5', 'o3', 'gpt-4o', 'o1'], currentModel: 'Default' };
+  }
+
+  public async reloadPage(): Promise<{ success: boolean; message: string }> {
+    if (this.isConnected()) {
+      return this.reloadPageDirect();
+    }
+
+    if (!this.isServerOwner) {
+      const remoteStatus = await this.checkRemoteStatus();
+      if (remoteStatus.connected) {
+        const res = await fetch(`http://127.0.0.1:${this.port}/reload`);
+        const data: any = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Bridge request failed');
+        }
+        return { success: true, message: data.content || 'Page reloaded' };
+      }
+    }
+
+    throw new Error('Chrome Extension is not connected.');
+  }
+
+  private async reloadPageDirect(): Promise<{ success: boolean; message: string }> {
+    if (!this.isConnected()) {
+      throw new Error('Chrome Extension is not connected.');
+    }
+
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    return new Promise((resolve, reject) => {
+      const timeoutTimer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Timeout waiting for page reload confirmation from Chrome Extension'));
+      }, 20000);
+
+      this.pendingRequests.set(requestId, {
+        resolve: (data) => resolve({ success: true, message: data.content || 'ChatGPT page reloaded successfully.' }),
+        reject,
+        timeoutTimer,
+      });
+
+      this.activeWs?.send(
+        JSON.stringify({
+          action: 'reload',
+          id: requestId,
+        })
+      );
+    });
   }
 
   private async listModelsDirect(): Promise<ModelsInfo> {
