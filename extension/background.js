@@ -135,7 +135,7 @@ function waitForTabReady(tabId) {
 
 // MAIN world execution functions
 async function handleAskRequest(msg) {
-  const { id, message: messageText, newChat, conversationId } = msg;
+  const { id, message: messageText, newChat, conversationId, model, reasoningEffort } = msg;
 
   let targetUrl = null;
   if (conversationId) {
@@ -157,7 +157,106 @@ async function handleAskRequest(msg) {
       await waitForTabReady(tab.id);
     }
 
-    // Step 1: Type text and submit in MAIN World
+    // Step 1: Switch Model and Reasoning Effort if requested
+    if (model || reasoningEffort) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        args: [model, reasoningEffort],
+        func: async (targetModel, targetReasoning) => {
+          try {
+            // Find settings button (High, Medium, Low, Model name, or dropdown)
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const settingBtn =
+              document.querySelector('button[aria-haspopup="menu"]') ||
+              buttons.find((b) => {
+                const txt = (b.textContent || '').trim();
+                return (
+                  txt.includes('High') ||
+                  txt.includes('Medium') ||
+                  txt.includes('Low') ||
+                  txt.includes('GPT') ||
+                  txt.includes('o3')
+                );
+              });
+
+            if (!settingBtn) return;
+
+            // 1. Select Model if specified
+            if (targetModel) {
+              settingBtn.click();
+              await new Promise((r) => setTimeout(r, 300));
+
+              const menuItems = Array.from(
+                document.querySelectorAll('[role="menuitem"], [role="option"], button, div[tabindex="0"]')
+              );
+              const modelRow = menuItems.find((it) => {
+                const txt = (it.textContent || '').trim();
+                return txt.startsWith('โมเดล') || txt.startsWith('Model');
+              });
+
+              if (modelRow) {
+                modelRow.click();
+                await new Promise((r) => setTimeout(r, 300));
+
+                const modelOptions = Array.from(
+                  document.querySelectorAll('[role="menuitem"], [role="option"], [data-radix-collection-item]')
+                );
+                const targetOption = modelOptions.find((opt) => {
+                  const txt = (opt.innerText || opt.textContent || '').trim();
+                  return txt.toLowerCase().includes(targetModel.toLowerCase());
+                });
+
+                if (targetOption) {
+                  targetOption.click();
+                  await new Promise((r) => setTimeout(r, 300));
+                }
+              }
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            }
+
+            // 2. Select Reasoning Effort if specified
+            if (targetReasoning) {
+              settingBtn.click();
+              await new Promise((r) => setTimeout(r, 300));
+
+              const menuItems = Array.from(
+                document.querySelectorAll('[role="menuitem"], [role="option"], button, div[tabindex="0"]')
+              );
+              const reasoningRow = menuItems.find((it) => {
+                const txt = (it.textContent || '').trim();
+                return (
+                  txt.includes('การใช้เหตุผล') ||
+                  txt.includes('Reasoning') ||
+                  txt.includes('เหตุผล')
+                );
+              });
+
+              if (reasoningRow) {
+                reasoningRow.click();
+                await new Promise((r) => setTimeout(r, 300));
+
+                const effortOptions = Array.from(
+                  document.querySelectorAll('[role="menuitem"], [role="option"], [data-radix-collection-item]')
+                );
+                const targetEffort = effortOptions.find((opt) => {
+                  const txt = (opt.innerText || opt.textContent || '').trim();
+                  return txt.toLowerCase().includes(targetReasoning.toLowerCase());
+                });
+
+                if (targetEffort) {
+                  targetEffort.click();
+                  await new Promise((r) => setTimeout(r, 300));
+                }
+              }
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            }
+          } catch (e) {}
+        },
+      });
+    }
+
+    // Step 2: Type text and submit in MAIN World
     const sendResult = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
