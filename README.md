@@ -129,6 +129,38 @@ Options:
 
 ---
 
+## 🌟 Live Interactive Memory & Context Retention Showcase
+
+The following is an actual, unedited multi-turn interactive session executed live via `mcp-chatgpt`:
+
+### Turn 1: Setting Context in a Fresh Session (`new_chat: true`)
+**Request:**
+```json
+{
+  "message": "สวัสดีครับ ผมชื่อ โจ๊กเกอร์ เป็น Software Architect ชอบเขียน Go และ TypeScript กำลังพัฒนาโปรเจกต์ชื่อ MCP-ChatGPT ฝากจำข้อมูลนี้ไว้หน่อยนะครับ ตอบสั้นๆ 1 ประโยคยืนยัน",
+  "new_chat": true
+}
+```
+**ChatGPT Response:**
+> *"จำไว้แล้วครับ: คุณชื่อโจ๊กเกอร์ เป็น Software Architect ชอบ Go และ TypeScript และกำลังพัฒนาโปรเจกต์ MCP-ChatGPT ครับ"*
+> 
+> *URL: [`https://chatgpt.com/c/6a86843c-8f30-83ec-b064-d27f7f832244`](https://chatgpt.com/c/6a86843c-8f30-83ec-b064-d27f7f832244)*
+
+---
+
+### Turn 2: Follow-up Memory Recall (`conversation_id`)
+**Request:**
+```json
+{
+  "message": "ไหนลองทบทวนดูซิว่า ผมชื่ออะไร ชอบเขียนภาษาอะไร และกำลังทำโปรเจกต์ชื่ออะไรอยู่?",
+  "conversation_id": "6a86843c-8f30-83ec-b064-d27f7f832244"
+}
+```
+**ChatGPT Response (Recalled in 6s):**
+> *"คุณชื่อ โจ๊กเกอร์ ชอบเขียน Go และ TypeScript และกำลังพัฒนาโปรเจกต์ชื่อ MCP-ChatGPT อยู่ครับ 🫡"*
+
+---
+
 ## 🤖 AI Assistant System Prompt & Integration Instruction
 
 Copy and paste the following instruction directly into your AI Assistant (Cursor Rules, Claude System Prompt, Antigravity Custom Instructions, Cline, Roo Code) so your AI automatically knows **when** and **how** to call `mcp-chatgpt`:
