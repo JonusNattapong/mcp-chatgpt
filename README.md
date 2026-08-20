@@ -123,9 +123,10 @@ If you already use Google Chrome daily with your logged-in ChatGPT account, inst
 
 ## ⚙️ Configuration for MCP Clients
 
-### 1. Antigravity / Claude Desktop
+You can connect `mcp-chatgpt` to any AI client supporting the Model Context Protocol (MCP):
 
-Add the following to your MCP configuration file (`claude_desktop_config.json` or Antigravity MCP settings):
+### 1. Antigravity IDE / Gemini CLI
+File location: `~/.gemini/config/mcp_config.json` (Windows: `C:\Users\<User>\.gemini\config\mcp_config.json`)
 
 ```json
 {
@@ -138,6 +139,125 @@ Add the following to your MCP configuration file (`claude_desktop_config.json` o
     }
   }
 }
+```
+
+---
+
+### 2. Claude Desktop
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "chatgpt": {
+      "command": "node",
+      "args": [
+        "d:/Projects/Github/mcp-chatgpt/dist/index.js"
+      ]
+    }
+  }
+}
+```
+
+---
+
+### 3. Cursor IDE
+Add to your project's `.cursor/mcp.json` or in **Cursor Settings > Features > MCP**:
+
+```json
+{
+  "mcpServers": {
+    "chatgpt": {
+      "command": "node",
+      "args": [
+        "d:/Projects/Github/mcp-chatgpt/dist/index.js"
+      ]
+    }
+  }
+}
+```
+
+---
+
+### 4. VS Code (Cline / Roo Code / Roo Clinic)
+File location: 
+- Cline: `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
+- Roo Code: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
+
+```json
+{
+  "mcpServers": {
+    "chatgpt": {
+      "command": "node",
+      "args": [
+        "d:/Projects/Github/mcp-chatgpt/dist/index.js"
+      ],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+---
+
+### 5. Windsurf Editor (Codeium)
+File location: `~/.codeium/windsurf/mcp_config.json`
+
+```json
+{
+  "mcpServers": {
+    "chatgpt": {
+      "command": "node",
+      "args": [
+        "d:/Projects/Github/mcp-chatgpt/dist/index.js"
+      ]
+    }
+  }
+}
+```
+
+---
+
+### 6. Zed Editor
+Add to `~/.config/zed/settings.json`:
+
+```json
+{
+  "context_servers": {
+    "chatgpt": {
+      "command": {
+        "path": "node",
+        "args": ["d:/Projects/Github/mcp-chatgpt/dist/index.js"]
+      }
+    }
+  }
+}
+```
+
+---
+
+### 7. LibreChat (`librechat.yaml`)
+Add to `librechat.yaml`:
+
+```yaml
+mcpServers:
+  chatgpt:
+    type: stdio
+    command: node
+    args:
+      - d:/Projects/Github/mcp-chatgpt/dist/index.js
+```
+
+---
+
+### 8. Remote Connection via Cloudflare Tunnel / HTTP
+If running the bridge daemon on another computer or VPS:
+
+```bash
+# Run bridge with Cloudflare Quick Tunnel
+cloudflared tunnel --url http://127.0.0.1:18999
 ```
 
 ---
